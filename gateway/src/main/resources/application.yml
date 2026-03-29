@@ -1,0 +1,126 @@
+# ============================================================
+# Agent Learning API Gateway — 主配置
+# ============================================================
+# 配置优先级: Nacos 远程配置 > 本文件 > 默认值
+# Nacos 未启动时自动降级为本地配置 (graceful fallback)
+# ============================================================
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agent-gateway
+  main:
+    web-application-type: reactive
+
+  cloud:
+    # ---- Nacos 服务发现 ----
+    nacos:
+      discovery:
+        enabled: ${NACOS_ENABLED:false}
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        group: DEFAULT_GROUP
+
+    # ---- Sentinel 限流熔断 ----
+    sentinel:
+      enabled: ${SENTINEL_ENABLED:true}
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+        port: 8719
+      # Gateway 模式适配
+      filter:
+        enabled: false
+      # Sentinel 规则持久化到 Nacos (生产推荐)
+      datasource:
+        flow:
+          nacos:
+            server-addr: ${NACOS_ADDR:localhost:8848}
+            data-id: ${spring.application.name}-flow-rules
+            group-id: SENTINEL_GROUP
+            data-type: json
+            rule-type: gw-flow
+        degrade:
+          nacos:
+            server-addr: ${NACOS_ADDR:localhost:8848}
+            data-id: ${spring.application.name}-degrade-rules
+            group-id: SENTINEL_GROUP
+            data-type: json
+            rule-type: degrade
+
+    # ---- Gateway 路由 ----
+    gateway:
+      # 全局默认过滤器
+      default-filters:
+        - AddResponseHeader=X-Gateway, agent-learning
+        - DedupeResponseHeader=Access-Control-Allow-Origin
+
+      routes:
+        # RAG API Server (Python :8000)
+        - id: rag-api
+          uri: ${RAG_URI:http://localhost:8000}
+          predicates:
+            - Path=/api/rag/**
+          filters:
+            - StripPrefix=2
+
+        # A2A Expert Agent (Python :5001)
+        - id: a2a-agent
+          uri: ${A2A_URI:http://localhost:5001}
+          predicates:
+            - Path=/api/a2a/**
+          filters:
+            - StripPrefix=2
+
+        # ReAct Agent (Python :5002)
+        - id: react-agent
+          uri: ${REACT_URI:http://localhost:5002}
+          predicates:
+            - Path=/api/react/**
+          filters:
+            - StripPrefix=2
+
+        # 前端静态资源 (Vite :3000 / nginx)
+        - id: frontend
+          uri: ${FRONTEND_URI:http://localhost:3000}
+          predicates:
+            - Path=/**
+          # 最低优先级，其他路由未匹配时 fallback 到前端
+          order: 9999
+
+# ---- Actuator ----
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+
+# ---- JWT 配置 ----
+gateway:
+  auth:
+    enabled: ${AUTH_ENABLED:false}
+    secret: ${AUTH_SECRET:change-me-in-production-at-least-32-chars!!}
+    expiration-hours: ${AUTH_EXPIRATION_HOURS:24}
+    public-paths:
+      - /api/rag/health
+      - /api/a2a/.well-known/agent.json
+      - /api/react/.well-known/agent.json
+      - /api/a2a/health
+      - /api/react/health
+      - /auth/**
+      - /fallback/**
+      - /actuator/**
+      - /health/**
+
+# ---- 日志 ----
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.alibaba.cloud.sentinel: INFO
+    com.agentlearning.gateway: DEBUG

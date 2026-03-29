@@ -12,6 +12,7 @@ This is a **full-stack AI learning project** with two distinct layers:
    - `project/wechat_bridge.py` — 微信 ↔ Agent 桥接器: iLink Bot API → 消息轮询 → 转发到 A2A Expert
    - `project/mcp_server.py` — MCP Server (stdio): 暴露 `rag_query`, `knowledge_graph`, `calculate`, `list_modules` 给 VS Code Copilot / Claude Desktop
    - `frontend/` — React 19 + Vite + Tailwind Chat & Manage UI (`:3000`), proxies via `/api/rag`, `/api/a2a`, `/api/react`
+   - `gateway/` — Java Spring Cloud Gateway (`:8080`): 统一入口、JWT 认证、IP 限流、熔断降级、聚合健康检查
    - `project/app/` — refactored production package of the above (same functionality, proper module separation)
 
 ## Key Conventions

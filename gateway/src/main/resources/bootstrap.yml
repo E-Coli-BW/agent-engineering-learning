@@ -1,0 +1,26 @@
+# ============================================================
+# Bootstrap 配置 — Nacos 配置中心
+# ============================================================
+# bootstrap.yml 在 application.yml 之前加载，
+# 用于初始化 Nacos 连接，从远程拉取其余配置。
+#
+# 当 NACOS_ENABLED=false (默认) 时，Nacos 不连接，
+# 所有配置走本地 application.yml。
+# ============================================================
+
+spring:
+  application:
+    name: agent-gateway
+  cloud:
+    nacos:
+      config:
+        enabled: ${NACOS_ENABLED:false}
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        group: DEFAULT_GROUP
+        file-extension: yml
+        # 共享配置 (多服务通用)
+        shared-configs:
+          - data-id: common.yml
+            group: DEFAULT_GROUP
+            refresh: true
