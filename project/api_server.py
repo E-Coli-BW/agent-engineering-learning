@@ -174,6 +174,10 @@ app = FastAPI(
 from project.infra.errors import register_error_handlers
 register_error_handlers(app)
 
+# 文档上传 + ETL API
+from project.etl.ingest_api import router as documents_router
+app.include_router(documents_router)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
