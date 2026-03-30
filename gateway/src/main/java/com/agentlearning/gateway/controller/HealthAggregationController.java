@@ -33,11 +33,20 @@ public class HealthAggregationController {
 
     private final WebClient webClient = WebClient.create();
 
+    @org.springframework.beans.factory.annotation.Value("${downstream.rag-url}")
+    private String ragUrl;
+
+    @org.springframework.beans.factory.annotation.Value("${downstream.a2a-url}")
+    private String a2aUrl;
+
+    @org.springframework.beans.factory.annotation.Value("${downstream.react-url}")
+    private String reactUrl;
+
     @GetMapping(value = "/health/all", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Map<String, Object>> aggregatedHealth() {
-        Mono<Map<String, Object>> ragHealth = checkService("RAG API", "http://localhost:8000/health");
-        Mono<Map<String, Object>> a2aHealth = checkService("A2A Expert", "http://localhost:5001/health");
-        Mono<Map<String, Object>> reactHealth = checkService("ReAct Agent", "http://localhost:5002/health");
+        Mono<Map<String, Object>> ragHealth = checkService("RAG API", ragUrl + "/health");
+        Mono<Map<String, Object>> a2aHealth = checkService("A2A Expert", a2aUrl + "/health");
+        Mono<Map<String, Object>> reactHealth = checkService("ReAct Agent", reactUrl + "/health");
 
         return Mono.zip(ragHealth, a2aHealth, reactHealth)
                 .map(tuple -> {

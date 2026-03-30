@@ -1,0 +1,30 @@
+# ============================================================
+# RAG API Server Dockerfile
+# ============================================================
+# Build:  docker build -f docker/Dockerfile.rag -t agent-rag .
+# Run:    docker run -p 8000:8000 --env OLLAMA_BASE_URL=http://host.docker.internal:11434 agent-rag
+# ============================================================
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 依赖安装 (利用 Docker 层缓存)
+COPY docker/requirements-server.txt .
+RUN pip install --no-cache-dir -r requirements-server.txt
+
+# 复制代码
+COPY project/ project/
+COPY data/project_chroma_db/ data/project_chroma_db/
+
+# Ollama 在容器外运行，默认通过 host.docker.internal 访问
+ENV OLLAMA_BASE_URL=http://host.docker.internal:11434
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+CMD ["python", "project/api_server.py"]

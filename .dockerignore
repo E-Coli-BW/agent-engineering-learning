@@ -1,0 +1,43 @@
+# Git
+.git
+.github
+
+# Python
+__pycache__
+*.pyc
+.venv
+venv
+.vite
+
+# Node
+frontend/node_modules
+frontend/dist
+
+# Java
+gateway/target
+
+# Data (mounted as volume instead)
+data/logs
+data/wechat_bridge
+outputs
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Teaching scripts (not needed in server containers)
+agent/
+rag/
+finetune/
+deploy/
+knowledge_graph/
+multi_head_attention.py
+char_transformer.py
+
+# Docs
+*.md
+JD_GAP_ANALYSIS.md
+
+# Monitoring (separate compose)
+monitoring/

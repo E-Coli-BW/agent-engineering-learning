@@ -1,0 +1,137 @@
+# ============================================================
+# Agent Learning — 全栈 Docker Compose
+# ============================================================
+#
+# 启动全部:  docker compose up -d
+# 查看状态:  docker compose ps
+# 查看日志:  docker compose logs -f [service]
+# 停止全部:  docker compose down
+#
+# 前提: Ollama 在宿主机运行 (ollama serve)
+#
+# 访问:
+#   前端:      http://localhost:3000
+#   Gateway:   http://localhost:8080
+#   RAG API:   http://localhost:8000
+#   Prometheus: http://localhost:9090
+#   Grafana:   http://localhost:3001 (admin/admin)
+# ============================================================
+
+services:
+  # ---- Python 后端 ----
+
+  rag-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.rag
+    container_name: agent-rag-api
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - EMBED_MODEL=mxbai-embed-large
+      - CHAT_MODEL=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - chroma_data:/app/data/project_chroma_db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  a2a-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.a2a
+    container_name: agent-a2a
+    ports:
+      - "5001:5001"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - LLM_MODEL=qwen2.5:7b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  react-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.react
+    container_name: agent-react
+    ports:
+      - "5002:5002"
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - chroma_data:/app/data/project_chroma_db
+    restart: unless-stopped
+
+  # ---- Java Gateway ----
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: agent-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - JAVA_OPTS=-Xms128m -Xmx256m
+    depends_on:
+      - rag-api
+      - a2a-agent
+      - react-agent
+    restart: unless-stopped
+
+  # ---- Frontend (nginx) ----
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: agent-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  # ---- Monitoring ----
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: agent-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus-docker.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: agent-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+  prometheus_data:
+  grafana_data:

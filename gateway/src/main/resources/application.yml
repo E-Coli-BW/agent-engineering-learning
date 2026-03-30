@@ -1,8 +1,9 @@
 # ============================================================
-# Agent Learning API Gateway — 主配置
+# Agent Learning API Gateway — 本地开发配置 (默认)
 # ============================================================
-# 配置优先级: Nacos 远程配置 > 本文件 > 默认值
-# Nacos 未启动时自动降级为本地配置 (graceful fallback)
+# 本地开发: 直接 mvn spring-boot:run 或 java -jar，全部走 localhost
+# Docker:   SPRING_PROFILES_ACTIVE=docker 激活 application-docker.yml
+# Nacos:    SPRING_PROFILES_ACTIVE=nacos  激活 application-nacos.yml
 # ============================================================
 
 server:
@@ -15,66 +16,56 @@ spring:
     web-application-type: reactive
 
   cloud:
-    # ---- Nacos 服务发现 ----
     nacos:
       discovery:
-        enabled: ${NACOS_ENABLED:false}
-        server-addr: ${NACOS_ADDR:localhost:8848}
-        namespace: ${NACOS_NAMESPACE:}
-        group: DEFAULT_GROUP
+        enabled: false
 
-    # ---- Sentinel 限流熔断 ----
     sentinel:
-      enabled: ${SENTINEL_ENABLED:true}
+      enabled: true
       transport:
-        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+        dashboard: localhost:8858
         port: 8719
-      # Gateway 模式适配
       filter:
         enabled: false
-      # Sentinel 规则持久化到 Nacos (需要 Nacos 运行, 通过 profile 启用)
-      # 默认不配 datasource，Sentinel 使用内存规则
-      # 启用方式: 创建 application-nacos.yml 并加 spring.profiles.active=nacos
 
-    # ---- Gateway 路由 ----
     gateway:
-      # 全局默认过滤器
       default-filters:
         - AddResponseHeader=X-Gateway, agent-learning
         - DedupeResponseHeader=Access-Control-Allow-Origin
 
       routes:
-        # RAG API Server (Python :8000)
         - id: rag-api
-          uri: ${RAG_URI:http://localhost:8000}
+          uri: http://localhost:8000
           predicates:
             - Path=/api/rag/**
           filters:
             - StripPrefix=2
 
-        # A2A Expert Agent (Python :5001)
         - id: a2a-agent
-          uri: ${A2A_URI:http://localhost:5001}
+          uri: http://localhost:5001
           predicates:
             - Path=/api/a2a/**
           filters:
             - StripPrefix=2
 
-        # ReAct Agent (Python :5002)
         - id: react-agent
-          uri: ${REACT_URI:http://localhost:5002}
+          uri: http://localhost:5002
           predicates:
             - Path=/api/react/**
           filters:
             - StripPrefix=2
 
-        # 前端静态资源 (Vite :3000 / nginx)
         - id: frontend
-          uri: ${FRONTEND_URI:http://localhost:3000}
+          uri: http://localhost:3000
           predicates:
             - Path=/**
-          # 最低优先级，其他路由未匹配时 fallback 到前端
           order: 9999
+
+# ---- 下游服务地址 (聚合健康检查用) ----
+downstream:
+  rag-url: http://localhost:8000
+  a2a-url: http://localhost:5001
+  react-url: http://localhost:5002
 
 # ---- Actuator ----
 management:
@@ -87,18 +78,17 @@ management:
       show-details: always
     gateway:
       enabled: true
-  # Prometheus 指标格式
   prometheus:
     metrics:
       export:
         enabled: true
 
-# ---- JWT 配置 ----
+# ---- JWT ----
 gateway:
   auth:
-    enabled: ${AUTH_ENABLED:false}
-    secret: ${AUTH_SECRET:change-me-in-production-at-least-32-chars!!}
-    expiration-hours: ${AUTH_EXPIRATION_HOURS:24}
+    enabled: false
+    secret: change-me-in-production-at-least-32-chars!!
+    expiration-hours: 24
     public-paths:
       - /api/rag/health
       - /api/a2a/.well-known/agent.json

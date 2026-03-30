@@ -1,0 +1,26 @@
+# ============================================================
+# A2A Expert Agent Dockerfile
+# ============================================================
+# Build:  docker build -f docker/Dockerfile.a2a -t agent-a2a .
+# Run:    docker run -p 5001:5001 --env OLLAMA_URL=http://host.docker.internal:11434 agent-a2a
+# ============================================================
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY docker/requirements-server.txt .
+RUN pip install --no-cache-dir -r requirements-server.txt
+
+COPY project/ project/
+
+ENV OLLAMA_URL=http://host.docker.internal:11434
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 5001
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')" || exit 1
+
+CMD ["python", "project/a2a_agent.py", "--serve"]

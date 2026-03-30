@@ -1,0 +1,43 @@
+# ============================================================
+# Docker Profile — SPRING_PROFILES_ACTIVE=docker 时激活
+# ============================================================
+# 覆盖 application.yml 中的 localhost 地址为 Docker service name
+# docker-compose.yml 里设置: SPRING_PROFILES_ACTIVE=docker
+# ============================================================
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: rag-api
+          uri: http://rag-api:8000
+          predicates:
+            - Path=/api/rag/**
+          filters:
+            - StripPrefix=2
+
+        - id: a2a-agent
+          uri: http://a2a-agent:5001
+          predicates:
+            - Path=/api/a2a/**
+          filters:
+            - StripPrefix=2
+
+        - id: react-agent
+          uri: http://react-agent:5002
+          predicates:
+            - Path=/api/react/**
+          filters:
+            - StripPrefix=2
+
+        - id: frontend
+          uri: http://frontend:3000
+          predicates:
+            - Path=/**
+          order: 9999
+
+# 下游服务地址 (聚合健康检查)
+downstream:
+  rag-url: http://rag-api:8000
+  a2a-url: http://a2a-agent:5001
+  react-url: http://react-agent:5002

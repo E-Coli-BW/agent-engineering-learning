@@ -1,0 +1,33 @@
+# ============================================================
+# Java API Gateway — Multi-stage Build
+# ============================================================
+# Build:  docker build -f docker/Dockerfile.gateway -t agent-gateway .
+# Run:    docker run -p 8080:8080 agent-gateway
+# ============================================================
+
+# ---- Stage 1: Build ----
+FROM maven:3.9-amazoncorretto-21-alpine AS build
+
+WORKDIR /build
+COPY gateway/pom.xml .
+# 先下载依赖 (利用层缓存, pom 不变就不重新下载)
+RUN mvn dependency:go-offline -B
+
+COPY gateway/src ./src
+RUN mvn clean package -DskipTests -B
+
+# ---- Stage 2: Runtime ----
+FROM amazoncorretto:21-alpine
+
+WORKDIR /app
+COPY --from=build /build/target/gateway-*.jar app.jar
+
+ENV JAVA_OPTS="-Xms128m -Xmx256m"
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -q --spider http://localhost:8080/actuator/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
