@@ -189,6 +189,7 @@ export async function a2aSendSubscribe(
   const decoder = new TextDecoder();
   let buf = '';
   let currentEvent = '';
+  let currentData = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -201,16 +202,23 @@ export async function a2aSendSubscribe(
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          if (currentEvent === 'artifact') {
-            for (const part of data.parts || []) {
-              if (part.type === 'text' && part.text) onToken(part.text);
+        currentData = line.slice(6);
+      } else if (line === '') {
+        // 空行 = SSE 事件结束，分发并重置
+        if (currentEvent && currentData) {
+          try {
+            const data = JSON.parse(currentData);
+            if (currentEvent === 'artifact') {
+              for (const part of data.parts || []) {
+                if (part.type === 'text' && part.text) onToken(part.text);
+              }
+            } else if (currentEvent === 'status') {
+              onStatus?.(data.state);
             }
-          } else if (currentEvent === 'status') {
-            onStatus?.(data.state);
-          }
-        } catch { /* skip */ }
+          } catch { /* skip malformed JSON */ }
+        }
+        currentEvent = '';
+        currentData = '';
       }
     }
   }
