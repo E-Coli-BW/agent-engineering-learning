@@ -112,6 +112,8 @@ class AppState:
     error_count: int = 0
     total_latency_ms: int = 0
     start_time: Optional[datetime] = None
+    # 延迟分布 (用于计算 P50/P95/P99)
+    latency_samples: list = []
 
 
 state = AppState()
@@ -177,13 +179,29 @@ app.add_middleware(
 )
 
 
-# ---- 请求计时中间件 ----
+# ---- 请求计时 + 追踪 ID 中间件 ----
 @app.middleware("http")
-async def add_timing_header(request: Request, call_next):
+async def add_timing_and_trace(request: Request, call_next):
+    import uuid as _uuid
     start = time.time()
+
+    # 从 Gateway 继承 X-Request-Id，或自己生成
+    request_id = request.headers.get("X-Request-Id", _uuid.uuid4().hex[:8])
+
     response = await call_next(request)
     elapsed = round((time.time() - start) * 1000)
+
     response.headers["X-Response-Time-Ms"] = str(elapsed)
+    response.headers["X-Request-Id"] = request_id
+
+    # 收集延迟样本 (只保留最近 1000 个，用于 P50/P95/P99)
+    state.latency_samples.append(elapsed)
+    if len(state.latency_samples) > 1000:
+        state.latency_samples = state.latency_samples[-1000:]
+
+    logger.info("[%s] %s %s → %s (%dms)",
+                request_id, request.method, request.url.path,
+                response.status_code, elapsed)
     return response
 
 
@@ -435,26 +453,69 @@ async def trigger_etl(request: ETLTriggerRequest):
 
 
 @app.get("/metrics")
-async def metrics():
+async def metrics(request: Request):
     """
-    简单的指标端点。
+    指标端点。
 
-    真实项目用 Prometheus + Grafana:
-      - QPS (每秒查询数)
-      - P50/P95/P99 延迟
-      - 错误率
-      - 向量库大小
+    支持两种格式:
+      - Accept: text/plain → Prometheus 文本格式 (Prometheus 采集用)
+      - 其他 → JSON 格式 (前端 Dashboard / 人工查看)
     """
     uptime = (datetime.now() - state.start_time).total_seconds() if state.start_time else 0
     avg_latency = state.total_latency_ms // state.request_count if state.request_count > 0 else 0
+    vector_count = state.vector_store._collection.count() if state.vector_store else 0
 
+    # 计算 P50/P95/P99
+    p50 = p95 = p99 = 0
+    samples = sorted(state.latency_samples) if state.latency_samples else []
+    if samples:
+        p50 = samples[int(len(samples) * 0.5)]
+        p95 = samples[int(len(samples) * 0.95)]
+        p99 = samples[min(int(len(samples) * 0.99), len(samples) - 1)]
+
+    accept = request.headers.get("accept", "")
+
+    # Prometheus 文本格式
+    if "text/plain" in accept or "text/plain" in request.query_params.get("format", ""):
+        from fastapi.responses import PlainTextResponse
+        lines = [
+            "# HELP rag_uptime_seconds RAG API server uptime in seconds",
+            "# TYPE rag_uptime_seconds gauge",
+            f"rag_uptime_seconds {uptime:.1f}",
+            "",
+            "# HELP rag_requests_total Total number of RAG requests",
+            "# TYPE rag_requests_total counter",
+            f'rag_requests_total{{status="success"}} {state.request_count - state.error_count}',
+            f'rag_requests_total{{status="error"}} {state.error_count}',
+            "",
+            "# HELP rag_request_duration_ms RAG request latency in milliseconds",
+            "# TYPE rag_request_duration_ms summary",
+            f'rag_request_duration_ms{{quantile="0.5"}} {p50}',
+            f'rag_request_duration_ms{{quantile="0.95"}} {p95}',
+            f'rag_request_duration_ms{{quantile="0.99"}} {p99}',
+            f"rag_request_duration_ms_avg {avg_latency}",
+            "",
+            "# HELP rag_vector_count Number of vectors in the store",
+            "# TYPE rag_vector_count gauge",
+            f"rag_vector_count {vector_count}",
+            "",
+            "# HELP rag_error_rate Ratio of failed requests",
+            "# TYPE rag_error_rate gauge",
+            f"rag_error_rate {state.error_count / max(state.request_count, 1):.4f}",
+        ]
+        return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+    # JSON 格式 (默认)
     return {
         "uptime_seconds": round(uptime),
         "total_requests": state.request_count,
         "total_errors": state.error_count,
         "error_rate": round(state.error_count / max(state.request_count, 1), 4),
         "avg_latency_ms": avg_latency,
-        "vector_count": state.vector_store._collection.count() if state.vector_store else 0,
+        "p50_latency_ms": p50,
+        "p95_latency_ms": p95,
+        "p99_latency_ms": p99,
+        "vector_count": vector_count,
     }
 
 
