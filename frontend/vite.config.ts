@@ -32,6 +32,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/react/, ''),
       },
+      // Multi-Agent Orchestrator (port 5003)
+      '/api/orch': {
+        target: 'http://localhost:5003',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/orch/, ''),
+      },
     },
   },
 })

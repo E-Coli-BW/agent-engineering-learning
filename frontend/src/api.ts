@@ -5,6 +5,7 @@
 const RAG_BASE = '/api/rag';   // proxy → localhost:8000
 const A2A_BASE = '/api/a2a';   // proxy → localhost:5001
 const REACT_BASE = '/api/react'; // proxy → localhost:5002
+const ORCH_BASE = '/api/orch'; // proxy → localhost:5003
 
 // ---------- 类型 ----------
 
@@ -66,7 +67,7 @@ export interface A2ATask {
   metadata: Record<string, string>;
 }
 
-export type BackendType = 'rag' | 'a2a' | 'react';
+export type BackendType = 'rag' | 'a2a' | 'react' | 'orchestrator';
 
 // ---------- RAG API ----------
 
@@ -141,7 +142,8 @@ export async function ragETLRun(sources: string[], incremental = true): Promise<
 
 // ---------- A2A Agent ----------
 
-function a2aBase(backend: 'a2a' | 'react') {
+function a2aBase(backend: 'a2a' | 'react' | 'orchestrator') {
+  if (backend === 'orchestrator') return ORCH_BASE;
   return backend === 'a2a' ? A2A_BASE : REACT_BASE;
 }
 
@@ -153,7 +155,7 @@ export async function a2aGetCard(backend: 'a2a' | 'react' = 'a2a'): Promise<Agen
 
 export async function a2aSendTask(
   question: string,
-  backend: 'a2a' | 'react' = 'a2a',
+  backend: 'a2a' | 'react' | 'orchestrator' = 'a2a',
   skill?: string,
 ): Promise<A2ATask> {
   const res = await fetch(`${a2aBase(backend)}/tasks/send`, {

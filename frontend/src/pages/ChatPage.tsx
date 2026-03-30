@@ -30,6 +30,7 @@ interface ChatMessage {
 // ---------- Constants ----------
 
 const BACKENDS: { value: BackendType; label: string; desc: string }[] = [
+  { value: 'orchestrator', label: '🎯 Multi-Agent', desc: 'LangGraph 多 Agent 协作 (推荐)' },
   { value: 'rag', label: 'RAG 知识库', desc: '向量检索 + LLM 生成' },
   { value: 'a2a', label: 'A2A Expert', desc: 'A2A 协议 Expert Agent' },
   { value: 'react', label: 'ReAct Agent', desc: 'ReAct + 工具调用' },
@@ -137,8 +138,9 @@ export default function ChatPage() {
             controller.signal,
           )
         } else {
-          // ReAct Agent — no streaming, use sync send
-          const task = await a2aSendTask(question, 'react')
+          // ReAct Agent / Orchestrator — no streaming, use sync send
+          const syncBackend = backend === 'orchestrator' ? 'orchestrator' : 'react'
+          const task = await a2aSendTask(question, syncBackend as 'a2a' | 'react')
           // 回答可能在 status.message / artifacts / history 中，按优先级提取
           const extractText = (parts: unknown) => {
             if (!Array.isArray(parts)) return ''

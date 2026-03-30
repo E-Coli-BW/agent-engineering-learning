@@ -40,6 +40,7 @@ PID_A2A="$LOG_DIR/a2a_agent.pid"
 PID_REACT="$LOG_DIR/react_agent.pid"
 PID_FRONT="$LOG_DIR/frontend.pid"
 PID_GATEWAY="$LOG_DIR/gateway.pid"
+PID_ORCHESTRATOR="$LOG_DIR/orchestrator.pid"
 GATEWAY_DIR="$ROOT_DIR/gateway"
 
 # ============================================================
@@ -165,6 +166,22 @@ start_frontend() {
     wait_for_port 3000 "前端 Dev Server" 15
 }
 
+start_orchestrator() {
+    if check_port 5003; then
+        log_warn "Orchestrator 已在运行 (port 5003)"
+        return 0
+    fi
+    log_step "启动 Multi-Agent Orchestrator (port 5003)..."
+    cd "$ROOT_DIR"
+    PYTHONPATH="$ROOT_DIR" python project/orchestrator/server.py > "$LOG_DIR/orchestrator.log" 2>&1 &
+    echo $! > "$PID_ORCHESTRATOR"
+    if ! wait_for_port 5003 "Orchestrator" 15; then
+        log_error "  日志: tail $LOG_DIR/orchestrator.log"
+        tail -3 "$LOG_DIR/orchestrator.log" 2>/dev/null | sed 's/^/  /'
+        return 1
+    fi
+}
+
 start_gateway() {
     if check_port 8080; then
         log_warn "API Gateway 已在运行 (port 8080)"
@@ -218,6 +235,9 @@ stop_all() {
     kill_by_pid_file "$PID_GATEWAY" "API Gateway"
     kill_by_port 8080 "Gateway (port 8080)"
 
+    kill_by_pid_file "$PID_ORCHESTRATOR" "Orchestrator"
+    kill_by_port 5003 "Orchestrator (port 5003)"
+
     echo ""
     log_info "所有服务已停止"
 }
@@ -233,7 +253,7 @@ show_status() {
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo ""
 
-    local services=("API Gateway:8080" "RAG API Server:8000" "A2A Expert Agent:5001" "ReAct Agent:5002" "Frontend Dev:3000")
+    local services=("API Gateway:8080" "RAG API Server:8000" "A2A Expert Agent:5001" "ReAct Agent:5002" "Orchestrator:5003" "Frontend Dev:3000")
 
     for svc in "${services[@]}"; do
         local name="${svc%%:*}"
@@ -284,6 +304,7 @@ print_summary() {
     echo -e "  �📚  RAG API:    ${GREEN}http://localhost:8000/docs${NC}"
     echo -e "  🤖  A2A Agent:  ${GREEN}http://localhost:5001/.well-known/agent.json${NC}"
     echo -e "  ⚡  ReAct Agent: ${GREEN}http://localhost:5002/.well-known/agent.json${NC}"
+    echo -e "  🎯  Orchestrator: ${GREEN}http://localhost:5003/.well-known/agent.json${NC}  (Multi-Agent)"
     echo ""
     echo -e "  📂 日志: $LOG_DIR/"
     echo -e "  🛑 停止: ${YELLOW}./start.sh stop${NC}"
@@ -297,6 +318,7 @@ case "${1:-all}" in
         start_rag_api || log_warn "RAG API 启动失败，跳过 (可能缺少 Python 依赖，运行: pip install -r requirements.txt)"
         start_a2a_agent || log_warn "A2A Agent 启动失败，跳过"
         start_react_agent || log_warn "ReAct Agent 启动失败，跳过"
+        start_orchestrator || log_warn "Orchestrator 启动失败，跳过"
         start_frontend
         start_gateway || log_warn "Gateway 启动失败，跳过 (需要 Java 21 + Maven)"
         print_summary
