@@ -355,12 +355,17 @@ def parse_python(file_path: str | Path) -> list[Document]:
 PARSER_MAP = {
     ".pdf": parse_pdf,
     ".pptx": parse_pptx,
-    ".ppt": parse_pptx,  # 注意: 旧版 .ppt 不支持，需要转换
     ".docx": parse_docx,
-    ".doc": parse_docx,
     ".md": parse_markdown,
     ".py": parse_python,
-    ".txt": parse_markdown,  # 纯文本按 markdown 处理
+    ".txt": parse_markdown,
+}
+
+# 旧格式需要转换
+LEGACY_FORMATS = {
+    ".ppt": "请将 .ppt 转换为 .pptx (用 PowerPoint 或 LibreOffice: libreoffice --convert-to pptx file.ppt)",
+    ".doc": "请将 .doc 转换为 .docx (用 Word 或 LibreOffice: libreoffice --convert-to docx file.doc)",
+    ".xls": "请将 .xls 转换为 .xlsx",
 }
 
 
@@ -369,9 +374,19 @@ def parse_file(file_path: str | Path) -> list[Document]:
     自动识别文件格式并解析
 
     支持: .pdf, .pptx, .docx, .md, .py, .txt
+    旧格式 (.ppt, .doc) 需要先转换
     """
     file_path = Path(file_path)
     suffix = file_path.suffix.lower()
+
+    # 旧格式提示
+    if suffix in LEGACY_FORMATS:
+        hint = LEGACY_FORMATS[suffix]
+        logger.error("不支持旧格式 %s: %s", suffix, hint)
+        return [Document(
+            content=f"⚠️ 不支持 {suffix} 格式。{hint}",
+            metadata={"source": file_path.name, "source_type": "error", "error": hint},
+        )]
 
     parser = PARSER_MAP.get(suffix)
     if not parser:

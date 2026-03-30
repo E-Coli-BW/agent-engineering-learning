@@ -37,10 +37,12 @@ async def upload_document(file: UploadFile = File(...)):
 
     支持: .pdf, .pptx, .docx, .md, .txt
     """
-    from project.etl.parsers import parse_file, PARSER_MAP
+    from project.etl.parsers import parse_file, PARSER_MAP, LEGACY_FORMATS
 
     # 验证文件格式
     suffix = Path(file.filename or "").suffix.lower()
+    if suffix in LEGACY_FORMATS:
+        raise HTTPException(400, LEGACY_FORMATS[suffix])
     if suffix not in PARSER_MAP:
         raise HTTPException(400, f"不支持的格式: {suffix}。支持: {list(PARSER_MAP.keys())}")
 
