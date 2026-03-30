@@ -72,6 +72,21 @@ This is a **full-stack AI learning project** with two distinct layers:
    - [ ] Python 代码有 docstring
    - [ ] Java 代码有 Javadoc
 
+5. **合并流程 (Branch Protection)**:
+   ```
+   feature branch → push → 开 PR → CI 自动检查 → Review → Squash Merge → 删除 branch
+   ```
+   GitHub 仓库已配置 Branch Protection Rule:
+   - master/main 分支禁止直接 push
+   - PR 必须通过 CI (python-test + java-test)
+   - 建议: Squash Merge 保持 commit history 干净
+
+   配置方法 (仓库 Settings → Branches → Add rule):
+   - Branch name pattern: `master`
+   - ✅ Require a pull request before merging
+   - ✅ Require status checks to pass (选择 "Python Tests" + "Java Gateway Tests")
+   - ✅ Require branches to be up to date before merging
+
 ### 代码风格
 
 **Python**:

@@ -1,0 +1,30 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ===== 代码审查 (规则检查) =====
+  code-review:
+    name: Code Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整 git history 做 diff
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pydantic
+
+      - name: Run Code Reviewer
+        run: |
+          echo "🔍 Running Code Review on PR diff..."
+          PYTHONPATH=. python project/review/reviewer.py || true
+        # || true 让 warning 不阻塞 CI，只有 test 失败才阻塞
