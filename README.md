@@ -41,14 +41,157 @@ agent-learning/
 │   ├── mcp_server.py             # MCP Server (Copilot 工具集成)
 │   ├── a2a_agent.py              # A2A Agent v1 (HTTP REST 问答)
 │   ├── react_agent.py            # ReAct Agent v2 (LLM + 工具调用)
-│   └── wechat_bridge.py          # 微信 ↔ Agent 桥接器
+│   ├── wechat_bridge.py          # 微信 ↔ Agent 桥接器
+│   └── app/                      # 生产版 package (模块拆分)
 │
-├── data/                         # 训练数据 + 向量库
-├── outputs/                      # 可视化输出
+├── 🖥️ 前端 (frontend/)
+│   ├── src/api.ts                # 统一 API 客户端
+│   ├── src/pages/ChatPage.tsx    # 💬 Chat (RAG/A2A/ReAct 三模式切换)
+│   ├── src/pages/DashboardPage.tsx # 📊 系统仪表盘
+│   ├── src/pages/AgentsPage.tsx  # 🤖 Agent Card 管理
+│   └── src/pages/ETLPage.tsx     # 🗄️ ETL 管道管理
+│
+├── 🚪 API Gateway (gateway/)
+│   ├── pom.xml                   # Spring Cloud Gateway + Sentinel + Nacos
+│   └── src/.../gateway/          # 路由/认证/限流/熔断/聚合健康检查
+│
+├── start.sh                      # 一键启动全栈 (5 个服务)
 ├── requirements.txt              # Python 依赖
-├── JD_GAP_ANALYSIS.md            # JD 差距分析
 └── README.md                     # 本文件
 ```
+
+---
+
+## 1.5 全栈架构
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  用户入口: Browser / 微信 / CLI / VS Code Copilot               │
+└──────────────┬───────────────────────────────────────────────────┘
+               │
+       ┌───────▼────────┐
+       │  Java Gateway   │  :8080  Spring Cloud Gateway
+       │  ┌─────────────┐│  • 统一路由: /api/rag → :8000
+       │  │ Security    ││              /api/a2a → :5001
+       │  │ Sentinel    ││              /api/react → :5002
+       │  │ LoadBalancer││              /** → :3000 (前端)
+       │  │ Logging     ││  • JWT 认证 (可选，默认关闭)
+       │  └─────────────┘│  • Sentinel 限流/熔断
+       └───┬──┬──┬──┬────┘  • 聚合健康检查 /health/all
+           │  │  │  │
+     ┌─────┘  │  │  └──────────────────────┐
+     │        │  │                         │
+┌────▼────┐ ┌─▼──▼──────┐ ┌──────────┐ ┌──▼─────────┐
+│ Frontend│ │ RAG API    │ │ A2A Agent│ │ ReAct Agent│
+│ :3000   │ │ :8000      │ │ :5001    │ │ :5002      │
+│ React19 │ │ FastAPI    │ │ FastAPI  │ │ FastAPI    │
+│ Vite    │ │ SSE stream │ │ A2A 协议  │ │ ReAct+Tools│
+│ Tailwind│ │ /query     │ │ SSE 流式  │ │ 同步 only  │
+└─────────┘ │ /health    │ │ /tasks/* │ │ /tasks/send│
+            │ /metrics   │ └─────┬───┘ └──────┬─────┘
+            │ /etl/run   │       │             │
+            └──────┬─────┘       └──────┬──────┘
+                   │                    │
+             ┌─────▼─────┐      ┌──────▼──────┐
+             │ ChromaDB   │      │   Ollama     │
+             │ 向量库      │      │ :11434       │
+             └───────────┘      │ qwen2.5:7b   │
+                                │ mxbai-embed  │
+                                └──────────────┘
+```
+
+### 服务清单
+
+| 服务 | 端口 | 技术栈 | 职责 |
+|------|------|--------|------|
+| **API Gateway** | `:8080` | Java 21 + Spring Cloud Gateway + Sentinel | 统一入口、路由、认证、限流、熔断 |
+| **RAG API** | `:8000` | Python + FastAPI + ChromaDB | 知识库问答 (向量检索 + LLM 生成) |
+| **A2A Expert** | `:5001` | Python + FastAPI + Ollama | A2A 协议 Expert Agent (SSE 流式) |
+| **ReAct Agent** | `:5002` | Python + FastAPI + Ollama | ReAct Agent + 工具调用 (同步) |
+| **Frontend** | `:3000` | React 19 + Vite + Tailwind CSS | Chat & Manage UI |
+| **Ollama** | `:11434` | Go (预装) | 本地 LLM 推理引擎 |
+
+### 数据流示例
+
+```
+用户在前端输入: "LoRA 的原理是什么？"
+  │
+  ▼ Browser → http://localhost:8080 (Gateway)
+  │           Sentinel 限流 → JWT 认证 → 请求日志 → 路由
+  │
+  ▼ Gateway 路由 /api/a2a/** → localhost:5001
+  │
+  ▼ A2A Agent: POST /tasks/sendSubscribe
+  │            关键词匹配 → lora_finetuning skill
+  │
+  ▼ Ollama: /api/generate (stream=true)
+  │         qwen2.5:7b 推理
+  │
+  ▼ SSE 流式返回 token → Gateway 透传 → 前端逐字显示
+```
+
+## 1.6 一键启动全栈
+
+### 前置条件
+
+| 依赖 | 版本 | 安装 |
+|------|------|------|
+| Python | 3.10+ | 运行后端服务 |
+| Node.js | 18+ | 运行前端 |
+| Java | 21+ | 运行 Gateway |
+| Maven | 3.9+ | 编译 Gateway |
+| Ollama | 0.1+ | 本地 LLM 推理 |
+
+```bash
+# 1. Ollama 运行 + 模型就绪
+ollama serve &
+ollama pull qwen2.5:7b && ollama pull mxbai-embed-large
+
+# 2. Python 依赖
+pip install langchain langchain-ollama langchain-community chromadb fastapi uvicorn
+
+# 3. 前端依赖
+cd frontend && npm install && cd ..
+
+# 4. Gateway 编译 (首次启动会自动编译，也可手动)
+cd gateway && mvn clean package -DskipTests && cd ..
+```
+
+### 启动 & 停止
+
+```bash
+./start.sh              # 一键启动全部 5 个服务
+./start.sh status       # 查看所有服务状态
+./start.sh stop         # 一键停止全部
+
+# 单独启动某个服务:
+./start.sh rag          # RAG API :8000
+./start.sh a2a          # A2A Agent :5001
+./start.sh react        # ReAct Agent :5002
+./start.sh front        # 前端 :3000
+./start.sh gateway      # Gateway :8080
+./start.sh back         # 后端三件套 (RAG + A2A + ReAct)
+```
+
+### 启动顺序 (start.sh 内部)
+
+```
+1. RAG API Server    :8000  ← Python (需要 Ollama + ChromaDB)
+2. A2A Expert Agent  :5001  ← Python (需要 Ollama)
+3. ReAct Agent       :5002  ← Python (需要 Ollama)
+4. Frontend Dev      :3000  ← Node.js (需要 npm install)
+5. API Gateway       :8080  ← Java   (需要 mvn package)
+```
+
+### 访问方式
+
+| 方式 | URL | 说明 |
+|------|-----|------|
+| **通过 Gateway** ⭐ | http://localhost:8080 | 统一入口，自动路由 |
+| 直接访问前端 | http://localhost:3000 | Vite 开发服务器 |
+| RAG API 文档 | http://localhost:8000/docs | FastAPI 自动文档 |
+| 聚合健康检查 | http://localhost:8080/health/all | 一次看全部状态 |
+| Gateway 路由表 | http://localhost:8080/actuator/gateway/routes | 当前路由 |
 
 ---
 
@@ -535,8 +678,11 @@ Loss
 | 工程化 RAG 系统 | ✅ 完成 | `project/etl_pipeline.py` + `project/api_server.py` |
 | MCP Server | ✅ 完成 | `project/mcp_server.py` |
 | A2A Agent 协作 | ✅ 完成 | `project/a2a_agent.py` |
-| ReAct Agent + 工具 | ✅ 骨架 | `project/react_agent.py` |
+| ReAct Agent + 工具 | ✅ 完成 | `project/react_agent.py` |
 | 微信 Bot 桥接器 | ✅ 完成 | `project/wechat_bridge.py` |
+| 前端 Chat & Manage | ✅ 完成 | `frontend/` (React + Vite + Tailwind) |
+| Java API Gateway | ✅ 完成 | `gateway/` (Spring Cloud + Sentinel + Nacos) |
+| 一键启动脚本 | ✅ 完成 | `start.sh` (5 服务生命周期管理) |
 
 ---
 
