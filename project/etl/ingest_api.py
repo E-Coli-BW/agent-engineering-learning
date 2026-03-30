@@ -165,13 +165,27 @@ def _ingest_documents(docs: list) -> int:
             collection_name=collection,
         )
 
-        # 转换为 LangChain Document
+        # 转换为 LangChain Document，二次分块 (embedding 模型有 token 限制)
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50,
+            separators=["\n\n", "\n", "。", ".", " "],
+        )
+
         lc_docs = []
         for doc in docs:
-            lc_docs.append(LCDocument(
-                page_content=doc.content,
-                metadata=doc.metadata,
-            ))
+            content = doc.content.strip()
+            if not content:
+                continue
+            if len(content) <= 500:
+                lc_docs.append(LCDocument(page_content=content, metadata=doc.metadata))
+            else:
+                # 过长 chunk 二次分块
+                sub_chunks = splitter.split_text(content)
+                for j, chunk in enumerate(sub_chunks):
+                    meta = {**doc.metadata, "sub_chunk": j + 1}
+                    lc_docs.append(LCDocument(page_content=chunk, metadata=meta))
 
         # 批量入库
         vector_store.add_documents(lc_docs)
