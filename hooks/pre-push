@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ============================================================
+# Git pre-push hook — 阻止直接 push 到 master/main
+# ============================================================
+# 安装: cp hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# 或者: ./hooks/install.sh (会同时安装 pre-commit 和 pre-push)
+# 跳过: git push --no-verify
+# ============================================================
+
+PROTECTED_BRANCHES="master main"
+
+while read local_ref local_sha remote_ref remote_sha; do
+    remote_branch=$(echo "$remote_ref" | sed 's|refs/heads/||')
+
+    for protected in $PROTECTED_BRANCHES; do
+        if [ "$remote_branch" = "$protected" ]; then
+            current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+            # 允许从 main push 到 master (本地 main → 远端 master 的映射)
+            # 但如果不是从 feature branch merge 过来的，警告一下
+            echo ""
+            echo "⚠️  你正在直接 push 到 $protected 分支"
+            echo ""
+            echo "推荐流程:"
+            echo "  1. git checkout -b feat/xxx"
+            echo "  2. 改代码 + commit"
+            echo "  3. git push origin feat/xxx"
+            echo "  4. GitHub 上开 PR → CI 检查 → Merge"
+            echo ""
+            echo "如果确定要直接 push, 用: git push --no-verify"
+            echo ""
+            exit 1
+        fi
+    done
+done
+
+exit 0
