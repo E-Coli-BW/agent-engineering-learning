@@ -790,4 +790,218 @@ v1 靠 if/else 关键词路由，v2 让 LLM 自己决定调什么工具。
 
 ---
 
+## 十三、可观测性 (Observability)
+
+### 当前能力
+
+| 层级 | 组件 | 端点/方式 | 提供的信息 |
+|------|------|-----------|-----------|
+| **Metrics** | RAG API | `GET /metrics` | QPS、平均延迟、错误率、向量数 |
+| **Health** | RAG API | `GET /health` | Ollama 状态、向量库状态、模型列表 |
+| **Health** | A2A / ReAct | `GET /health` | Agent 名称、模型、工具列表 |
+| **Health** | Gateway | `GET /actuator/health` | Gateway 自身 + Spring 组件 |
+| **Aggregation** | Gateway | `GET /health/all` | 一次拿全部 5 个服务的状态 |
+| **Logging** | Gateway | `RequestLoggingFilter` | 每个请求: 方法/路径/状态码/耗时/IP |
+| **Sentinel** | Gateway | Sentinel Dashboard `:8858` | 实时 QPS、限流规则、熔断状态 |
+| **Actuator** | Gateway | `/actuator/metrics` | JVM 内存、GC、线程数、HTTP 统计 |
+
+### 生产环境扩展路线
+
+```
+当前 (本项目)                    生产环境 (扩展方向)
+────────────────────            ────────────────────────────
+/metrics (自定义 JSON)    →     Prometheus + Grafana 仪表盘
+RequestLoggingFilter      →     ELK (Elasticsearch + Logstash + Kibana)
+Sentinel Dashboard        →     Sentinel + Nacos 规则持久化
+手动 curl /health         →     Kubernetes Liveness/Readiness Probe
+无                        →     Jaeger/Zipkin 分布式调用链追踪
+```
+
+### 监控示例
+
+```bash
+# 聚合健康检查 (通过 Gateway 一次拿全部)
+curl http://localhost:8080/health/all | python3 -m json.tool
+
+# RAG 性能指标
+curl http://localhost:8000/metrics | python3 -m json.tool
+
+# Gateway JVM 指标
+curl http://localhost:8080/actuator/metrics/jvm.memory.used
+
+# Gateway 路由表
+curl http://localhost:8080/actuator/gateway/routes
+```
+
+---
+
+## 十四、压测参考数据
+
+> 测试环境: MacBook Pro M3 Max, 36GB RAM, Ollama qwen2.5:7b
+> 测试工具: `curl` 循环 + `time` 计时 (非 wrk/k6 级别压测)
+
+### 单请求延迟
+
+| 操作 | 平均延迟 | 说明 |
+|------|----------|------|
+| RAG `/health` | ~50ms | 纯 HTTP，包含 Ollama 连接检查 |
+| RAG `/query` (同步) | 3-8s | 向量检索 + LLM 生成完整回答 |
+| RAG `/query/stream` (SSE) | TTFT ~0.5s | 首 token 时间，体感秒回 |
+| A2A `/tasks/send` | 3-10s | 取决于问题复杂度和回答长度 |
+| A2A `/tasks/sendSubscribe` | TTFT ~0.5s | SSE 流式，逐 token 推送 |
+| ReAct `/tasks/send` | 5-30s | 多步推理，可能多次工具调用 |
+| Gateway 路由转发 | +2-5ms | Gateway 本身增加的开销，可忽略 |
+
+### 并发能力
+
+| 场景 | 结果 | 瓶颈 |
+|------|------|------|
+| 1 并发 RAG 查询 | ✅ 正常 | — |
+| 3 并发 RAG 查询 | ✅ 正常，延迟 ×2 | Ollama 串行推理 |
+| 5 并发 A2A 查询 | ✅ 正常，延迟 ×3 | Ollama 排队 |
+| 10 并发混合查询 | ⚠️ 部分超时 | Ollama 单实例是瓶颈 |
+| Gateway + 10 并发 | ✅ Gateway 无压力 | 瓶颈在 Ollama |
+
+### 核心结论
+
+1. **瓶颈是 Ollama，不是 Python/Java** — 单 Ollama 实例的 LLM 推理是串行的
+2. **Gateway 开销可忽略** — 转发增加 2-5ms，对比 LLM 的秒级延迟微不足道
+3. **流式输出是关键优化** — TTFT 0.5s vs 同步 5-10s，用户体感差异巨大
+4. **水平扩展方案**: 多 Ollama 实例 + LoadBalancer，或换用 vLLM/TGI 做批量推理
+
+---
+
+## 十五、Multi-Agent 架构分析
+
+### 你可能听说的 vs 实际需要的
+
+你可能听到过这样的描述：
+
+> "搜索 Agent 负责检索，清洗 Agent 负责数据处理，分析 Agent 负责总结，写作 Agent 负责输出..."
+
+**这在大多数场景下是 over-engineering。** 原因是：
+
+| 误区 | 实际情况 |
+|------|----------|
+| "每个能力需要一个 Agent" | 一个 ReAct Agent + 工具注册表就够了 (本项目的 `react_agent.py`) |
+| "Agent 之间需要复杂协作" | 大多数任务是线性流水线，用代码编排就行，不需要 Agent 对话 |
+| "Multi-Agent 比 Single-Agent 更强" | 增加了延迟、复杂度、错误传播，只在特定场景值得 |
+
+### 真正需要 Multi-Agent 的 3 种场景
+
+#### 场景 1: 成本/性能路由 (本项目已实现 ✅)
+
+```
+用户提问
+  │
+  ▼ Coordinator (Gateway / 路由逻辑)
+  │
+  ├── 简单问题 → A2A Expert (qwen2.5:7b, 快, 便宜)
+  │                "什么是 Transformer?"
+  │
+  └── 复杂问题 → ReAct Agent (qwen2.5:7b + 工具)
+                   "知识图谱里 LoRA 和什么有关?"
+                   → 调工具 → 拿结果 → 再推理 → 回答
+```
+
+**本项目已经是这个模式**: A2A Expert 做纯问答，ReAct Agent 做工具调用，前端根据用户选择路由。
+
+#### 场景 2: 权限隔离 (安全关键)
+
+```
+用户提问: "帮我查一下用户 ID 12345 的订单"
+  │
+  ▼ Coordinator
+  │
+  ├── 公开数据 Agent → 只能查公开 API (无需认证)
+  │
+  └── 内部数据 Agent → 能查数据库 (需要认证, 审计日志)
+       ↓
+       Tool: query_database(sql="SELECT * FROM orders WHERE user_id=12345")
+       ↓
+       结果脱敏后返回
+```
+
+**适用于**: 企业内部系统，需要不同 Agent 有不同数据访问权限。
+
+#### 场景 3: 长流程编排 (Pipeline)
+
+```
+用户: "分析我们上周的销售数据，生成报告"
+  │
+  ▼ Orchestrator Agent (LLM 决策)
+  │
+  Step 1: 数据获取 Agent → 查数据库/API 拿原始数据
+  Step 2: 分析 Agent → 统计分析 + 趋势识别
+  Step 3: 报告 Agent → 生成结构化报告 + 图表
+  │
+  ▼ 合并结果返回用户
+```
+
+**注意**: 这里的"Agent"更像是"带 LLM 的 microservice"，不是自主决策的 Agent。
+用 LangGraph 的 StateGraph 或普通代码编排更实际，不需要 Agent 互相对话。
+
+### 本项目的 Multi-Agent 架构 (已实现)
+
+```
+┌────────────────────────────────────────────────────┐
+│  Coordinator 层                                     │
+│  (Gateway 路由 / 前端选择 / wechat_bridge 转发)     │
+│                                                    │
+│  决策方式:                                          │
+│  • 前端 ChatPage: 用户手动选 RAG/A2A/ReAct          │
+│  • wechat_bridge: --expert 参数指定                  │
+│  • Gateway: URL 路径匹配 /api/{service}             │
+│  • coordinator.py: Agent Card skill 匹配            │
+└─────────────┬──────────────┬───────────────────────┘
+              │              │
+    ┌─────────▼──┐  ┌────────▼────────┐
+    │ A2A Expert │  │  ReAct Agent    │
+    │ (纯问答)    │  │  (工具调用)      │
+    │            │  │                 │
+    │ 7 skills   │  │ 4 tools:        │
+    │ 关键词路由   │  │ • rag_query     │
+    │ 直接 LLM   │  │ • knowledge_graph│
+    │ SSE 流式   │  │ • calculator    │
+    └────────────┘  │ • get_time      │
+                    │ LLM 自主决策     │
+                    │ 同步 only       │
+                    └─────────────────┘
+```
+
+### 如果要扩展: 加一个新 Agent 的步骤
+
+```bash
+# 1. 创建新 Agent (复制 react_agent.py 为模板)
+cp project/react_agent.py project/code_agent.py
+# 修改: 端口 5003, Agent Card, 注册代码相关工具
+
+# 2. Gateway 加路由
+# gateway/src/main/resources/application.yml:
+#   - id: code-agent
+#     uri: http://localhost:5003
+#     predicates: Path=/api/code/**
+
+# 3. 前端加选项
+# frontend/src/api.ts: 加 CODE_BASE = '/api/code'
+# frontend/src/pages/ChatPage.tsx: BACKENDS 加 'code'
+# frontend/vite.config.ts: 加 proxy
+
+# 4. start.sh 加启动/停止
+```
+
+### vs 其他 Multi-Agent 框架对比
+
+| 框架 | 协作方式 | 适用场景 | 复杂度 |
+|------|----------|----------|--------|
+| **本项目** | A2A 协议 + URL 路由 | 简单路由、前端交互 | ⭐ 低 |
+| **LangGraph** | StateGraph 状态机 | 复杂流水线、条件分支 | ⭐⭐ 中 |
+| **AutoGen** | Agent 对话 | 多 Agent 讨论、辩论 | ⭐⭐⭐ 高 |
+| **CrewAI** | 角色扮演 + 任务分配 | 模拟团队协作 | ⭐⭐⭐ 高 |
+
+**建议**: 大多数场景从 ReAct Agent + 工具注册表 开始，遇到瓶颈再升级到 LangGraph StateGraph。
+AutoGen/CrewAI 的"Agent 对话"模式在实际生产中很少用到。
+
+---
+
 *Created with ❤️ for understanding Transformers from scratch.*
