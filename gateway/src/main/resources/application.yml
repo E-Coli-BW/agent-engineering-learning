@@ -32,22 +32,9 @@ spring:
       # Gateway 模式适配
       filter:
         enabled: false
-      # Sentinel 规则持久化到 Nacos (生产推荐)
-      datasource:
-        flow:
-          nacos:
-            server-addr: ${NACOS_ADDR:localhost:8848}
-            data-id: ${spring.application.name}-flow-rules
-            group-id: SENTINEL_GROUP
-            data-type: json
-            rule-type: gw-flow
-        degrade:
-          nacos:
-            server-addr: ${NACOS_ADDR:localhost:8848}
-            data-id: ${spring.application.name}-degrade-rules
-            group-id: SENTINEL_GROUP
-            data-type: json
-            rule-type: degrade
+      # Sentinel 规则持久化到 Nacos (需要 Nacos 运行, 通过 profile 启用)
+      # 默认不配 datasource，Sentinel 使用内存规则
+      # 启用方式: 创建 application-nacos.yml 并加 spring.profiles.active=nacos
 
     # ---- Gateway 路由 ----
     gateway:

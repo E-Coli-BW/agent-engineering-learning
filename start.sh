@@ -39,6 +39,8 @@ PID_RAG="$LOG_DIR/rag_api.pid"
 PID_A2A="$LOG_DIR/a2a_agent.pid"
 PID_REACT="$LOG_DIR/react_agent.pid"
 PID_FRONT="$LOG_DIR/frontend.pid"
+PID_GATEWAY="$LOG_DIR/gateway.pid"
+GATEWAY_DIR="$ROOT_DIR/gateway"
 
 # ============================================================
 # 工具函数
@@ -163,6 +165,33 @@ start_frontend() {
     wait_for_port 3000 "前端 Dev Server" 15
 }
 
+start_gateway() {
+    if check_port 8080; then
+        log_warn "API Gateway 已在运行 (port 8080)"
+        return 0
+    fi
+    # 检查是否已编译
+    local jar="$GATEWAY_DIR/target/gateway-1.0.0.jar"
+    if [ ! -f "$jar" ]; then
+        log_step "编译 Gateway (首次启动)..."
+        cd "$GATEWAY_DIR"
+        mvn clean package -DskipTests -q > "$LOG_DIR/gateway_build.log" 2>&1
+        if [ $? -ne 0 ]; then
+            log_error "Gateway 编译失败，查看: $LOG_DIR/gateway_build.log"
+            return 1
+        fi
+    fi
+    log_step "启动 API Gateway (port 8080)..."
+    cd "$GATEWAY_DIR"
+    java -jar "$jar" > "$LOG_DIR/gateway.log" 2>&1 &
+    echo $! > "$PID_GATEWAY"
+    if ! wait_for_port 8080 "API Gateway" 20; then
+        log_error "  日志: tail $LOG_DIR/gateway.log"
+        tail -3 "$LOG_DIR/gateway.log" 2>/dev/null | sed 's/^/  /'
+        return 1
+    fi
+}
+
 # ============================================================
 # 停止函数
 # ============================================================
@@ -186,6 +215,9 @@ stop_all() {
     kill_by_pid_file "$PID_REACT" "ReAct Agent"
     kill_by_port 5002 "ReAct Agent (port 5002)"
 
+    kill_by_pid_file "$PID_GATEWAY" "API Gateway"
+    kill_by_port 8080 "Gateway (port 8080)"
+
     echo ""
     log_info "所有服务已停止"
 }
@@ -201,7 +233,7 @@ show_status() {
     echo -e "${CYAN}═══════════════════════════════════════${NC}"
     echo ""
 
-    local services=("RAG API Server:8000" "A2A Expert Agent:5001" "ReAct Agent:5002" "Frontend Dev:3000")
+    local services=("API Gateway:8080" "RAG API Server:8000" "A2A Expert Agent:5001" "ReAct Agent:5002" "Frontend Dev:3000")
 
     for svc in "${services[@]}"; do
         local name="${svc%%:*}"
@@ -248,7 +280,8 @@ print_summary() {
     echo -e "${CYAN}═══════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  🖥️  前端:       ${GREEN}http://localhost:3000${NC}"
-    echo -e "  📚  RAG API:    ${GREEN}http://localhost:8000/docs${NC}"
+    echo -e "  �  Gateway:    ${GREEN}http://localhost:8080${NC}  (统一入口)"
+    echo -e "  �📚  RAG API:    ${GREEN}http://localhost:8000/docs${NC}"
     echo -e "  🤖  A2A Agent:  ${GREEN}http://localhost:5001/.well-known/agent.json${NC}"
     echo -e "  ⚡  ReAct Agent: ${GREEN}http://localhost:5002/.well-known/agent.json${NC}"
     echo ""
@@ -265,6 +298,7 @@ case "${1:-all}" in
         start_a2a_agent || log_warn "A2A Agent 启动失败，跳过"
         start_react_agent || log_warn "ReAct Agent 启动失败，跳过"
         start_frontend
+        start_gateway || log_warn "Gateway 启动失败，跳过 (需要 Java 21 + Maven)"
         print_summary
         ;;
     back|backend)
@@ -295,6 +329,10 @@ case "${1:-all}" in
         print_banner
         start_react_agent
         ;;
+    gateway|gw)
+        print_banner
+        start_gateway
+        ;;
     stop)
         stop_all
         ;;
@@ -312,6 +350,7 @@ case "${1:-all}" in
         echo "  rag       只启动 RAG API Server (:8000)"
         echo "  a2a       只启动 A2A Expert Agent (:5001)"
         echo "  react     只启动 ReAct Agent (:5002)"
+        echo "  gateway   只启动 API Gateway (:8080)"
         echo "  stop      停止所有服务"
         echo "  status    查看服务状态"
         echo ""

@@ -1,0 +1,31 @@
+# ============================================================
+# Nacos Profile — 启用 Sentinel 规则持久化 + 服务发现
+# ============================================================
+# 激活: java -jar gateway.jar --spring.profiles.active=nacos
+# 或:   SPRING_PROFILES_ACTIVE=nacos java -jar gateway.jar
+# ============================================================
+
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: true
+      config:
+        enabled: true
+
+    sentinel:
+      datasource:
+        flow:
+          nacos:
+            server-addr: ${NACOS_ADDR:localhost:8848}
+            data-id: ${spring.application.name}-flow-rules
+            group-id: SENTINEL_GROUP
+            data-type: json
+            rule-type: gw-flow
+        degrade:
+          nacos:
+            server-addr: ${NACOS_ADDR:localhost:8848}
+            data-id: ${spring.application.name}-degrade-rules
+            group-id: SENTINEL_GROUP
+            data-type: json
+            rule-type: degrade
