@@ -101,8 +101,10 @@ class CodeReviewer:
                 ))
 
         for i, line in enumerate(lines, 1):
-            # 检查 hardcoded localhost (除了默认值)
-            if "localhost" in line and "getenv" not in line and "default" not in line.lower():
+            # 检查 hardcoded localhost (除了默认值和环境变量)
+            if "localhost" in line and not any(safe in line for safe in [
+                "getenv", "os.environ", "default", "DEFAULT", '"""', "'''", "配置"
+            ]):
                 if not line.strip().startswith("#") and not line.strip().startswith('"""'):
                     self.issues.append(ReviewIssue(
                         "warning", file_path, i, "hardcoded-url",
@@ -172,10 +174,11 @@ class CodeReviewer:
 
     def _check_test_coverage(self, files: list[str]):
         """检查新增/修改的代码是否有对应测试"""
+        # 排除: 面试题、教学脚本、__init__.py、测试文件自身
+        EXCLUDE_PATTERNS = ("test", "__init__", "interview-blackbox")
         py_files = [f for f in files if f.endswith(".py")
                     and f.startswith("project/")
-                    and "test" not in f
-                    and "__init__" not in f]
+                    and not any(pat in f for pat in EXCLUDE_PATTERNS)]
 
         test_files = set(f for f in files if f.startswith("tests/"))
 
