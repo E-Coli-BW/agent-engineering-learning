@@ -63,11 +63,9 @@ from datetime import datetime, timezone
 PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
-# ---- 日志 ----
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(message)s",
-)
+# ---- 结构化日志 ----
+from project.infra.logging import setup_logging
+setup_logging("a2a-agent")
 logger = logging.getLogger("a2a")
 
 
@@ -216,9 +214,10 @@ class AgentCard:
 
 
 # ============================================================
-# Task 存储 (内存, 生产环境用 Redis/DB)
+# Task 存储 (自动选择: REDIS_URL 存在 → Redis, 否则 → 内存)
 # ============================================================
-task_store: dict[str, Task] = {}
+from project.infra import get_task_store
+_task_store = get_task_store()
 
 
 # ============================================================
@@ -359,7 +358,7 @@ def create_expert_app():
             history=[Message(role="user", parts=[Part(text=user_text)])],
             metadata={"skill": skill_id},
         )
-        task_store[task_id] = task
+        _task_store.save(task_id, task.to_dict())
         logger.info("Task %s: skill=%s, input='%s'", task_id, skill_id, user_text[:50])
 
         try:
@@ -379,7 +378,7 @@ def create_expert_app():
                 message=Message(role="agent", parts=[Part(text=f"错误: {e}")]).to_dict(),
             )
 
-        task_store[task_id] = task
+        _task_store.save(task_id, task.to_dict())
         return JSONResponse(task.to_dict())
 
     @app.post("/tasks/sendSubscribe")
@@ -410,7 +409,7 @@ def create_expert_app():
             history=[Message(role="user", parts=[Part(text=user_text)])],
             metadata={"skill": skill_id},
         )
-        task_store[task_id] = task
+        _task_store.save(task_id, task.to_dict())
         logger.info("Task %s (stream): skill=%s, input='%s'", task_id, skill_id, user_text[:50])
 
         async def event_stream() -> AsyncGenerator[str, None]:
@@ -444,7 +443,7 @@ def create_expert_app():
                     message=Message(role="agent", parts=[Part(text=f"错误: {e}")]).to_dict(),
                 )
                 yield f"event: status\ndata: {json.dumps(task.status.to_dict(), ensure_ascii=False)}\n\n"
-            task_store[task_id] = task
+            _task_store.save(task_id, task.to_dict())
 
         return StreamingResponse(
             event_stream(), media_type="text/event-stream",
@@ -454,10 +453,10 @@ def create_expert_app():
     @app.get("/tasks/{task_id}")
     async def get_task(task_id: str):
         """A2A: 查询 Task 状态"""
-        task = task_store.get(task_id)
-        if not task:
+        task_data = _task_store.get(task_id)
+        if not task_data:
             return JSONResponse({"error": f"Task {task_id} not found"}, status_code=404)
-        return JSONResponse(task.to_dict())
+        return JSONResponse(task_data)
 
     @app.get("/health")
     async def health():

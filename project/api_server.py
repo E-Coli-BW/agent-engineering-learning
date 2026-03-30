@@ -51,7 +51,8 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "2"))
 TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "30"))
 
 # ---- 日志 ----
-logging.basicConfig(level=logging.INFO)
+from project.infra.logging import setup_logging
+setup_logging("rag-api")
 logger = logging.getLogger("rag_api")
 
 
@@ -168,6 +169,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# 统一错误处理
+from project.infra.errors import register_error_handlers
+register_error_handlers(app)
 
 # CORS
 app.add_middleware(

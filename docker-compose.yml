@@ -18,6 +18,18 @@
 # ============================================================
 
 services:
+  # ---- Redis (Task 持久化 + Session) ----
+
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
   # ---- Python 后端 ----
 
   rag-api:
@@ -52,8 +64,12 @@ services:
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
       - LLM_MODEL=qwen2.5:7b
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_FORMAT=json
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
     restart: unless-stopped
 
   react-agent:
@@ -66,8 +82,12 @@ services:
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - REDIS_URL=redis://redis:6379/1
+      - LOG_FORMAT=json
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
     volumes:
       - chroma_data:/app/data/project_chroma_db
     restart: unless-stopped
@@ -133,5 +153,6 @@ services:
 
 volumes:
   chroma_data:
+  redis_data:
   prometheus_data:
   grafana_data:
