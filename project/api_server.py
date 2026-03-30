@@ -565,6 +565,80 @@ async def clear_chat_history(session_id: str):
 
 
 # ============================================================
+# 高级 RAG Pipeline (Query Rewrite + Hybrid + Reranker)
+# ============================================================
+
+@app.post("/query/advanced")
+async def query_advanced(request: QueryRequest):
+    """
+    高级 RAG Pipeline:
+      1. Multi-Query Rewrite (LLM 改写为多角度查询)
+      2. Vector Search (每个 query 独立检索)
+      3. 去重 + 排序
+      4. LLM 生成 (带 pipeline 元信息)
+
+    比 /query 多了 query rewrite，recall 更高。
+    返回额外的 pipeline 字段展示每步的信息。
+    """
+    start_time = time.time()
+    state.request_count += 1
+
+    if not state.vector_store:
+        raise HTTPException(status_code=503, detail="向量库未初始化")
+
+    try:
+        from project.rag.advanced_pipeline import AdvancedRAGPipeline
+
+        pipeline = AdvancedRAGPipeline(
+            use_rewrite=True,
+            use_hybrid=False,  # BM25 需要单独构建索引，此处关闭
+            use_reranker=False,  # LLM reranker 太慢，默认关闭
+            top_k=request.top_k,
+        )
+        result = pipeline.query(request.question, vector_store=state.vector_store)
+
+        # LLM 生成
+        system_prompt = """你是一个技术知识库助手。根据提供的上下文信息回答问题。
+规则: 只根据上下文回答，不确定时明确说明。引用来源。用中文回答。"""
+        user_prompt = f"上下文:\n{result['context']}\n\n问题: {request.question}"
+
+        llm = ChatOllama(model=CHAT_MODEL, base_url=OLLAMA_BASE_URL, temperature=request.temperature)
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ])
+
+        elapsed_ms = int((time.time() - start_time) * 1000)
+        state.total_latency_ms += elapsed_ms
+
+        sources = [
+            SourceDocument(
+                content=s["content"][:500],
+                source=s.get("source", "unknown"),
+                score=round(s.get("score", 0), 4),
+                metadata={k: v for k, v in s.get("metadata", {}).items()
+                          if k in ("source_type", "page", "slide", "section")},
+            )
+            for s in result["sources"]
+        ]
+
+        return {
+            "answer": response.content,
+            "sources": [s.model_dump() for s in sources],
+            "query_time_ms": elapsed_ms,
+            "model": CHAT_MODEL,
+            "retrieval_count": len(sources),
+            "pipeline": result["pipeline"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        state.error_count += 1
+        logger.error("Advanced query failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
 # 启动
 # ============================================================
 if __name__ == "__main__":
