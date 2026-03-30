@@ -85,11 +85,13 @@ export async function ragQueryStream(
   onToken: (token: string) => void,
   topK = 5,
   temperature = 0.1,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`${RAG_BASE}/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, top_k: topK, temperature, stream: true }),
+    signal,
   });
   if (!res.ok) throw new Error(`RAG stream failed: ${res.status}`);
   const reader = res.body!.getReader();
@@ -173,6 +175,7 @@ export async function a2aSendSubscribe(
   onStatus?: (state: string) => void,
   backend: 'a2a' | 'react' = 'a2a',
   skill?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`${a2aBase(backend)}/tasks/sendSubscribe`, {
     method: 'POST',
@@ -182,6 +185,7 @@ export async function a2aSendSubscribe(
       message: { role: 'user', parts: [{ type: 'text', text: question }] },
       metadata: skill ? { skill } : {},
     }),
+    signal,
   });
   if (!res.ok) throw new Error(`A2A stream failed: ${res.status}`);
 

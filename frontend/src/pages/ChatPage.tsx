@@ -57,6 +57,7 @@ export default function ChatPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   // auto-scroll
   useEffect(() => {
@@ -95,11 +96,17 @@ export default function ChatPage() {
       if (inputRef.current) inputRef.current.style.height = 'auto'
       setLoading(true)
 
+      // 取消上一个请求 (防止 StrictMode 双重调用)
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+
       try {
         if (backend === 'rag') {
           await ragQueryStream(
             question,
             (token) => {
+              if (controller.signal.aborted) return
               setMessages((prev) => {
                 const copy = [...prev]
                 const last = copy[copy.length - 1]
@@ -109,12 +116,14 @@ export default function ChatPage() {
             },
             topK,
             temperature,
+            controller.signal,
           )
         } else if (backend === 'a2a') {
           // A2A Expert — supports SSE streaming
           await a2aSendSubscribe(
             question,
             (token) => {
+              if (controller.signal.aborted) return
               setMessages((prev) => {
                 const copy = [...prev]
                 const last = copy[copy.length - 1]
@@ -124,15 +133,22 @@ export default function ChatPage() {
             },
             undefined,
             'a2a',
+            undefined,
+            controller.signal,
           )
         } else {
           // ReAct Agent — no streaming, use sync send
           const task = await a2aSendTask(question, 'react')
+          // 回答可能在 status.message / artifacts / history 中，按优先级提取
+          const extractText = (parts: unknown) => {
+            if (!Array.isArray(parts)) return ''
+            return parts.filter((p: { type: string; text: string }) => p.type === 'text')
+              .map((p: { type: string; text: string }) => p.text).join('')
+          }
+
           const answer =
-            task.artifacts?.[0]?.parts
-              ?.filter((p: { type: string; text: string }) => p.type === 'text')
-              .map((p: { type: string; text: string }) => p.text)
-              .join('') ||
+            extractText(task.status?.message?.parts) ||
+            extractText(task.artifacts?.[0]?.parts) ||
             task.history
               ?.filter((m: { role: string }) => m.role === 'agent')
               .flatMap((m: { role: string; parts: { type: string; text: string }[] }) => m.parts)
@@ -148,6 +164,8 @@ export default function ChatPage() {
           })
         }
       } catch (err: unknown) {
+        // AbortError 是正常取消（StrictMode remount），不是错误
+        if (err instanceof DOMException && err.name === 'AbortError') return
         setMessages((prev) => {
           const copy = [...prev]
           const last = copy[copy.length - 1]
