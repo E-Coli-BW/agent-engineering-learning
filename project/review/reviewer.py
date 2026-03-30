@@ -239,6 +239,102 @@ def print_report(issues: list[ReviewIssue]):
 
 
 # ============================================================
+# LLM Code Review (可选, 需要 Ollama 运行)
+# ============================================================
+
+LLM_REVIEW_PROMPT = """你是一个资深代码审查员。请审查以下 git diff，从这几个维度给出简洁的反馈:
+
+1. **Bug 风险**: 有没有明显的逻辑错误、边界情况遗漏、空指针风险?
+2. **性能**: 有没有 O(n²) 循环、不必要的重复计算、内存泄漏?
+3. **安全**: 有没有注入风险、硬编码密钥、不安全的反序列化?
+4. **可读性**: 命名是否清晰、函数是否过长、有没有魔法数字?
+5. **测试**: 这个改动是否需要新增或修改测试?
+
+规则:
+- 只指出有问题的地方，不要说"看起来没问题"
+- 每个问题一行，格式: [severity] 文件:行号 — 描述
+  severity: 🔴 BUG | 🟡 WARNING | 🔵 SUGGESTION
+- 如果没有问题，只说 "LGTM ✅"
+- 用中文回答
+
+Git Diff:
+```
+{diff}
+```
+"""
+
+
+class LLMReviewer:
+    """
+    LLM 驱动的代码审查
+
+    使用 Ollama LLM 分析 git diff，给出智能审查意见。
+    比纯规则检查更能发现逻辑问题和设计问题。
+
+    使用:
+      PYTHONPATH=. python project/review/reviewer.py --llm
+
+    注意:
+      - 需要 Ollama 运行 + qwen2.5:7b 模型
+      - 每次审查约 5-15 秒 (取决于 diff 大小)
+      - 不放在 pre-commit hook 里 (太慢)
+      - 适合手动审查或 CI pipeline
+    """
+
+    @staticmethod
+    def review_staged_diff() -> str:
+        """获取 staged diff 并用 LLM 审查"""
+        # 获取 diff
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--no-color"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout.strip()
+
+        if not diff:
+            return "没有 staged 的变更。"
+
+        # 截断过长的 diff (LLM context 限制)
+        if len(diff) > 6000:
+            diff = diff[:6000] + "\n... (diff 太长，已截断)"
+
+        print(f"📝 Diff 大小: {len(diff)} 字符")
+        print("🤖 正在调用 LLM 审查 (需要 5-15 秒)...")
+        print()
+
+        # 调用 Ollama
+        try:
+            import json
+            import urllib.request
+
+            ollama_url = os.getenv("OLLAMA_BASE_URL",
+                                   os.getenv("OLLAMA_URL", "http://localhost:11434"))
+            model = os.getenv("CHAT_MODEL", "qwen2.5:7b")
+
+            prompt = LLM_REVIEW_PROMPT.format(diff=diff)
+
+            data = json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0.2, "num_predict": 1024},
+            }).encode()
+
+            req = urllib.request.Request(
+                f"{ollama_url}/api/chat",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read())
+                return result.get("message", {}).get("content", "LLM 没有返回内容")
+
+        except Exception as e:
+            return f"❌ LLM 审查失败 (Ollama 可能未运行): {e}\n\n提示: 确保 ollama serve 在运行"
+
+
+# ============================================================
 # CLI + Git Hook
 # ============================================================
 
@@ -247,7 +343,29 @@ if __name__ == "__main__":
 
     reviewer = CodeReviewer()
 
-    if "--hook" in sys.argv:
+    if "--llm" in sys.argv:
+        # LLM 审查模式 — 调 Ollama 做智能 review
+        print("=" * 60)
+        print("🤖 LLM Code Review (Ollama)")
+        print("=" * 60)
+        print()
+
+        # 先跑规则检查
+        issues = reviewer.review_staged()
+        if issues:
+            print_report(issues)
+            print()
+            print("-" * 60)
+            print()
+
+        # 再跑 LLM 审查
+        llm_feedback = LLMReviewer.review_staged_diff()
+        print("🤖 LLM 审查意见:")
+        print("-" * 40)
+        print(llm_feedback)
+        print("-" * 40)
+
+    elif "--hook" in sys.argv:
         # Git pre-commit hook 模式 — error 时阻止 commit
         issues = reviewer.review_staged()
         errors = [i for i in issues if i.severity == "error"]
@@ -258,6 +376,8 @@ if __name__ == "__main__":
             print_report(issues)
         sys.exit(0)
     else:
-        # CLI 模式 — 只打印报告
+        # CLI 模式 — 只打印规则检查报告
         issues = reviewer.review_staged()
         print_report(issues)
+        print()
+        print("💡 提示: 用 --llm 启用 LLM 智能审查 (需要 Ollama)")
