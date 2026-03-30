@@ -525,6 +525,42 @@ async def metrics(request: Request):
 
 
 # ============================================================
+# 聊天记忆 API
+# ============================================================
+
+@app.post("/chat/history")
+async def add_chat_message(request: Request):
+    """保存一条聊天消息"""
+    from project.infra.memory import get_chat_memory
+    body = await request.json()
+    session_id = body.get("session_id", "default")
+    role = body.get("role", "user")
+    content = body.get("content", "")
+    if not content:
+        return JSONResponse({"error": "content required"}, status_code=400)
+    memory = get_chat_memory()
+    memory.add(session_id, role, content)
+    return {"status": "ok"}
+
+
+@app.get("/chat/history/{session_id}")
+async def get_chat_history(session_id: str, max_turns: int = 0):
+    """获取聊天历史"""
+    from project.infra.memory import get_chat_memory
+    memory = get_chat_memory()
+    return {"session_id": session_id, "messages": memory.get_history(session_id, max_turns)}
+
+
+@app.delete("/chat/history/{session_id}")
+async def clear_chat_history(session_id: str):
+    """清除聊天历史"""
+    from project.infra.memory import get_chat_memory
+    memory = get_chat_memory()
+    memory.clear(session_id)
+    return {"status": "ok"}
+
+
+# ============================================================
 # 启动
 # ============================================================
 if __name__ == "__main__":

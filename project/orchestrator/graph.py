@@ -97,38 +97,25 @@ def plan_node(state: OrchestratorState) -> dict:
 
     response = _call_llm([{"role": "user", "content": plan_prompt}])
 
-    # 解析 LLM 返回的 JSON
-    try:
-        # 提取 JSON（LLM 可能包裹在 markdown code block 中）
-        json_str = response
-        if "```" in json_str:
-            json_str = json_str.split("```")[1]
-            if json_str.startswith("json"):
-                json_str = json_str[4:]
-        plan_data = json.loads(json_str.strip())
-    except (json.JSONDecodeError, IndexError):
-        logger.warning("LLM plan 解析失败, 降级为 knowledge agent: %s", response[:200])
-        plan_data = {
-            "plan": "解析失败，默认使用知识检索",
-            "agents": [{"name": "knowledge", "query": query}],
-        }
+    # 结构化输出: Pydantic 校验 LLM 返回的 JSON
+    from project.infra.structured import parse_llm_json, PlanOutput
+    fallback = {"plan": "解析失败，默认使用知识检索", "agents": [{"name": "knowledge", "query": query}]}
+    plan = parse_llm_json(response, PlanOutput, fallback=fallback)
 
-    agents_to_call = [a["name"] for a in plan_data.get("agents", [])]
-    # 验证 agent name 合法性
+    agents_to_call = [a.name for a in plan.agents]
     valid = {"knowledge", "calculator", "code"}
     agents_to_call = [a for a in agents_to_call if a in valid]
 
     if not agents_to_call:
-        agents_to_call = ["knowledge"]  # fallback
+        agents_to_call = ["knowledge"]
 
-    logger.info("Plan: %s → agents=%s", plan_data.get("plan", ""), agents_to_call)
+    logger.info("Plan: %s → agents=%s", plan.plan, agents_to_call)
 
     return {
-        "plan": plan_data.get("plan", ""),
+        "plan": plan.plan,
         "agents_to_call": agents_to_call,
         "iteration": iteration + 1,
-        # 保存完整的 agent query 映射
-        "_agent_queries": {a["name"]: a["query"] for a in plan_data.get("agents", [])},
+        "_agent_queries": {a.name: a.query for a in plan.agents},
     }
 
 
