@@ -25,7 +25,10 @@ jobs:
           pip install --upgrade pip
           pip install pytest pytest-asyncio httpx
           pip install langchain langchain-ollama langchain-community chromadb
-          pip install fastapi uvicorn
+          pip install langchain-text-splitters
+          pip install fastapi uvicorn python-multipart
+          pip install pydantic
+          pip install pymupdf python-pptx python-docx
 
       - name: Run tests
         run: |
